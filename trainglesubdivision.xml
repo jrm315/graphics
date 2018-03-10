@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<pipeline>
+<vertex>
+<![CDATA[#version 410 
+
+in vec3 vertex_worldSpace;
+in vec3 normal_worldSpace;
+in vec2 textureCoordinate_input;
+
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+uniform mat3 normalMatrix; //mv matrix without translation
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+uniform vec4 ambient;
+uniform vec4 diffuse;
+uniform vec4 specular;
+uniform float shininess;
+uniform float ambientCoefficent;
+uniform float diffuseCoefficent;
+uniform float specularCoefficent;
+
+out data
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+}vertexInOut;
+
+//Vertex shader compute the vectors per vertex
+void main(void)
+{
+  //Put the vertex in the correct coordinate system by applying the model view matrix
+  vec4 vertex_camSpace = mvMatrix*vec4(vertex_worldSpace,1.0f); 
+  vertexInOut.position_camSpace = vertex_camSpace;
+  
+  //Apply the model-view transformation to the normal (only rotation, no translation)
+  //Normals put in the camera space
+  vertexInOut.normal_camSpace = normalize(normalMatrix*normal_worldSpace);
+  
+  //we need to make sure that the normals and texture coordinates
+  //aren't optimised away, 
+  //so we have to use them somehow.
+  //Uniforms and array objects that are nor used for 
+  //the final output(!) are  removed during 
+  //glsl compilation regardless if you assign them. 
+  vec4 workaround = 
+		vec4((vertexInOut.normal_camSpace.x + textureCoordinate_input.x)*0.0001, 0, 0, 1);
+  
+  //forwarding pure red as RGBA color
+  //Try to use the normals as RGB color or the texture coordiantes!
+  vertexInOut.color = vec4(1.0, 0.0, 0.0, 1.0);
+  
+  //a negligible contribution from normals and texcoords is added 
+  //to ensure these array objects are not optimsed away 
+  vertexInOut.color += workaround;
+  
+  //Texture coordinate
+  vertexInOut.textureCoordinate = textureCoordinate_input;
+  
+  gl_Position = pMatrix * vertex_camSpace;
+}
+
+]]></vertex>
+<geom>
+<![CDATA[#version 410 
+
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 75) out;
+
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+uniform mat3 normalMatrix; //mv matrix without translation
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+uniform int time;
+uniform int level;
+
+in data
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+}vertexIn[3];
+
+out fragmentData
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+} frag;
+
+// Generates a vertex given bary coordinates.
+void generate(vec3 bary)
+{
+ 
+  gl_Position = gl_in[0].gl_Position * bary[0] +
+				gl_in[1].gl_Position * bary[1] +
+				gl_in[2].gl_Position * bary[2];
+
+  frag.position_camSpace = vertexIn[0].position_camSpace * bary[0] +
+						   vertexIn[1].position_camSpace * bary[1] +
+						   vertexIn[2].position_camSpace * bary[2];
+
+  frag.normal_camSpace = vertexIn[0].normal_camSpace * bary[0] +
+						 vertexIn[1].normal_camSpace * bary[1] +
+						 vertexIn[2].normal_camSpace * bary[2];
+
+  frag.textureCoordinate = vertexIn[0].textureCoordinate * bary[0] +
+						   vertexIn[1].textureCoordinate * bary[1] +
+						   vertexIn[2].textureCoordinate * bary[2];
+
+  frag.color = vertexIn[0].color * bary[0] +
+               vertexIn[1].color * bary[1] +
+               vertexIn[2].color * bary[2];
+  EmitVertex();
+
+}
+
+
+void main() {
+
+  float num_strips = pow(2, level);
+  vec3 prev_point;
+  
+  vec3 bottom_left = vec3(1, 0, 0);
+  vec3 bottom_right = vec3(0, 0, 1);
+  vec3 top = vec3(0, 1, 0);
+
+  // The vector going up the traingle representing the distance between
+  // two vertices.
+  vec3 v = (top - bottom_left) / num_strips;
+  // The vector going across the traingle representing the distance between
+  // two vertices.
+  vec3 u = (bottom_right - bottom_left) / num_strips;
+
+  // For each level, it inreases the number of points it iterates through.
+  for(float i = num_strips; i >= 1; i++)
+  {
+    float num_points = 3 + (i-1 * 2);
+
+    float a = 1/num_strips * i;
+
+    prev_point = vec3(a, 1-a, 0);
+
+    for(float j = 1; j <= num_points; j++)
+    {
+      vec3 bary;
+
+      if(j == 1)
+      {
+
+        bary = prev_point;
+
+	  } else if(mod(j, 2) == 0)
+      {
+
+        bary = prev_point + v;
+
+      } else
+      {
+
+        prev_point += u;
+        bary = prev_point; 
+
+      }
+
+      generate(bary);
+    }
+  }
+
+  
+
+
+  // The number of loops i takes.
+//  float loops = pow(2, level) + 1;
+  // The scale factor for the length of the sides of the triangle.
+//  float scale = pow(0.5, level);
+  
+//  for(int i = 0; i < loops; i++)
+//  {
+//	for(int j = 0; j <= i; j++)
+//	{
+//	  float alpha = 1 - (scale * i);
+//      float gamma = scale * j;
+//      float beta = 1 - alpha - gamma;
+//      vec3 bary = vec3(alpha, beta, gamma);
+//      generate(bary);
+//	}
+//  }
+  EndPrimitive();
+}
+
+]]></geom>
+<frag>
+<![CDATA[#version 410
+
+uniform vec4 ambient;
+uniform vec4 diffuse;
+uniform vec4 specular;
+uniform float shininess;
+uniform float ambientCoefficent;
+uniform float diffuseCoefficent;
+uniform float specularCoefficent;
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+in fragmentData
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+} frag;
+
+out vec4 fragColor; 
+
+//Fragment shader computes the final color
+void main(void)
+{
+  fragColor =  frag.color;
+}
+
+]]></frag>
+<R2TVert>
+<![CDATA[#version 410
+
+layout(location = 0) in vec4 vertex_worldSpace;
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+
+//in vec4 vertex_worldSpace;
+in vec2 textureCoordinate_input;
+
+out vec2 varyingTextureCoordinate;
+
+//Vertex shader compute the vectors per vertex
+void main(void)
+{
+  //Put the vertex in the correct coordinate system by applying the model view matrix
+  vec4 vertex_camSpace = mvMatrix*vertex_worldSpace;
+
+  varyingTextureCoordinate = textureCoordinate_input;
+  gl_Position = pMatrix * vertex_camSpace;
+}
+
+]]></R2TVert>
+<R2TFrag>
+<![CDATA[#version 410
+
+uniform sampler2D textureRendered;
+
+in vec2 varyingTextureCoordinate;
+
+out vec4 fragColor;
+
+void main(void)
+{
+  //Render the texture on a quad
+  fragColor = texture(textureRendered, varyingTextureCoordinate.st);
+}
+
+]]></R2TFrag>
+</pipeline>
